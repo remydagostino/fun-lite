@@ -1,0 +1,23 @@
+{
+  "name": "fun-lite",
+  "version": "0.0.1",
+  "description": "Functors and Monads with zero hassle",
+  "main": "index.js",
+  "scripts": {
+    "test": "mocha test/main.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/remydagostino/fun-lite.git"
+  },
+  "keywords": [
+    "functional",
+    "monad"
+  ],
+  "author": "Remy D'Agostino",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/remydagostino/fun-lite/issues"
+  },
+  "homepage": "https://github.com/remydagostino/fun-lite"
+}
