@@ -1,3 +1,8 @@
+process.on('uncaughtException', function(err) {
+  console.error('uncaught', err, err.stack);
+});
+
+
 function _lift(inner, fn) {
   return function() {
     var argI, args, unwrapper;
@@ -120,6 +125,19 @@ function concat(a, b) {
   }
 }
 
+// :: ((a -> c) -> (b -> c)) -> m a b -> c
+function liftBi(err, success) {
+  return function bimapper(a) {
+    // Handle null or undefined
+    if (a == null) {
+      return err();
+    }
+    else if (hasMethod('bimap', a)) {
+      return a.bimap(err, success);
+    }
+  };
+}
+
 // :: Monad m => (a -> [b]) -> [a] -> [b]
 function flatMap(fn, xs) {
   if (hasMethod('flatMap', xs)) {
@@ -174,17 +192,21 @@ function _Maybe(isJust, value) {
   this.value     = value;
 }
 
-_Maybe.prototype.chain = function(fn) {
+_Maybe.prototype.bimap = function(onNull, onVal) {
   if (this.isJust) {
-    return fn(this.value);
+    return onVal(this.value);
   }
   else {
-    return nothing();
+    return onNull();
   }
 };
 
+_Maybe.prototype.flatMap = _Maybe.prototype.chain = function(fn) {
+  return this.bimap(nothing, fn);
+};
+
 _Maybe.prototype.fmap = _Maybe.prototype.map = function(fn) {
-  this.chain(function(x) {
+  return this.chain(function(x) {
     return just(fn(x));
   })
 };
@@ -208,7 +230,16 @@ function _Either(isRight, left, right) {
   this.left    = left;
 }
 
-_Either.prototype.chain = function(fn) {
+_Either.prototype.bimap = function(onLeft, onRight) {
+  if (this.right) {
+    return onRight(this.right);
+  }
+  else {
+    return onLeft(this.left);
+  }
+};
+
+_Either.prototype.flatMap = _Either.prototype.chain = function(fn) {
   if (this.right) {
     return fn(this.right);
   }
@@ -218,7 +249,7 @@ _Either.prototype.chain = function(fn) {
 };
 
 _Either.prototype.fmap = _Either.prototype.map = function(fn) {
-  this.chain(function(x) {
+  return this.chain(function(x) {
     return right(fn(x));
   });
 };
@@ -242,16 +273,16 @@ function _Validation(isSuccess, err, value) {
   this.value     = value;
 }
 
-_Validation.prototype.fmap = _Validation.prototype.map = function(fn) {
+_Validation.prototype.bimap = function(onError, onSuccess) {
   if (this.isSuccess) {
-    return success(fn(this.value));
+    return onSuccess(this.success);
   }
   else {
-    return this;
+    return onError(this.err);
   }
 };
 
-_Validation.prototype.chain = function(fn) {
+_Validation.prototype.flatMap = _Validation.prototype.chain = function(fn) {
   var v2 = fn(this.value);
 
   if (this.isSuccess) {
@@ -265,6 +296,15 @@ _Validation.prototype.chain = function(fn) {
   }
 };
 
+_Validation.prototype.fmap = _Validation.prototype.map = function(fn) {
+  if (this.isSuccess) {
+    return success(fn(this.value));
+  }
+  else {
+    return this;
+  }
+};
+
 function success(x) {
   return new _Validation(true, null, x);
 }
@@ -272,6 +312,45 @@ function success(x) {
 function failure(err) {
   return new _Validation(false, err, null);
 }
+
+
+// 4. Futures
+// Most future operations can succeed or fail.
+// Handle these by returning an either from the success function
+function _Future(f) {
+  this._fork = f;
+}
+
+function future(f) {
+  return new _Future(f);
+}
+
+function resolved(value) {
+  return new _Future(function(resolve) {
+    return resolve(value);
+  });
+}
+
+_Future.prototype.fork = function(done) {
+  // TODO: Memoize so that the future can only be run once
+  return this._fork(done);
+};
+
+_Future.prototype.flatMap = _Future.prototype.chain = function(fn) {
+  return new _Future(function(resolve) {
+    return this.fork(function(result) {
+      return fn(result).fork(resolve);
+    });
+  }.bind(this));
+};
+
+_Future.prototype.fmap = _Future.prototype.map = function(fn) {
+  return this.chain(function(result) {
+    return resolved(fn(result));
+  });
+};
+
+_Future.of = resolved;
 
 
 /////////////////////////////////
@@ -327,10 +406,42 @@ compose(lift(toUpperCase), liftM(split))(['Hello', 'World']);
 
 /////////////////////////////////
 // Exhibit E - Maybe
+lift(toUpperCase)(just('Hello'));
+lift(toUpperCase)(nothing());
+
+function halveEven(a) {
+  if (a % 2 === 0) {
+    return just(a / 2);
+  }
+  else {
+    return nothing();
+  }
+};
+
+var halveEvenM = liftM(halveEven);
+
+compose(halveEvenM, halveEvenM, halveEven)(120);
 
 
 /////////////////////////////////
 // Exhibit F - Either
+
+function findRecord(id) {
+  var record = ({
+    1: 'Remy',
+    2: 'Billy',
+    5: 'Samson'
+  })[id];
+
+  if (record) {
+    return right(record);
+  }
+  else {
+    return left('Record "' + id + '" could not be found');
+  }
+}
+
+compose(lift(toUpperCase), findRecord)(5);
 
 
 /////////////////////////////////
@@ -363,6 +474,56 @@ Person.prototype.sayHello = function() {
   return 'Hello: ' + this.first;
 };
 
-(new Person('Remigio', 'D')).validate().map(function(me) {
+(new Person('Remigio', 'Daggy')).validate().map(function(me) {
   return me.sayHello();
 });
+
+
+/////////////////////////////////
+// Exhibit H - Futures
+
+function timedValue(x, time) {
+  return future(function(resolve) {
+    setTimeout(function() {
+      resolve(x);
+    }, time);
+  });
+}
+
+// Just like promises, only lazy
+lift(toUpperCase)(timedValue('hello', 500))
+.fork(function(result) {
+  console.log('future result', result);
+});
+
+
+// Handling failure requires a bit of lifting
+lift(findRecord)(timedValue(2, 200))
+.map(lift(toUpperCase))
+.fork(liftBi(
+  function(err) {
+    console.log('err', err);
+  },
+  function(result) {
+    console.log('success', result);
+  }
+));
+
+lift(halveEven)(timedValue(20, 200))
+.map(liftM(halveEven))
+.fork(liftBi(
+  function(err) {
+    console.log('err', err);
+  },
+  function(result) {
+    console.log('success', result);
+  }
+));
+
+
+
+/////////////////////////////////
+// Exhibit H - Lenses
+
+
+
