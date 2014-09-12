@@ -1,45 +1,49 @@
-process.on('uncaughtException', function(err) {
-  console.error('uncaught', err, err.stack);
-});
+function _baseInnerLift(inner, fn, args) {
+  var argI, args, unwrapper;
 
+  // Special case for futures
+  if (args.length > 1 && args[0] instanceof _Future) {
+    return _Future._innerLift(inner, fn, args);
+  }
 
-function _lift(inner, fn) {
-  return function() {
-    var argI, args, unwrapper;
+  // This other case handles everything else, though
+  // each monad could have it's own implementations...
 
-    args = arguments;
-
-    unwrapper = function(xs) {
-      return inner(
-        function(x) {
-          return fn.apply(this, xs.concat(x));
-        },
-        args[args.length - 1]
-      );
-    };
-
-    for(argI = args.length - 2; argI >= 0; --argI) {
-      unwrapper = function(memo, arg, xs) {
-        return flatMap(
-          function(x) {
-            return memo(xs.concat(x));
-          },
-          arg
-        );
-      }.bind(this, unwrapper, args[argI]);
-    }
-
-    return unwrapper([]);
+  unwrapper = function(xs) {
+    return (inner ? flatMap : map)(
+      function(x) {
+        return fn.apply(this, xs.concat(x));
+      },
+      args[args.length - 1]
+    );
   };
+
+  for(argI = args.length - 2; argI >= 0; --argI) {
+    unwrapper = function(memo, arg, xs) {
+      return flatMap(
+        function(x) {
+          return memo(xs.concat(x));
+        },
+        arg
+      );
+    }.bind(this, unwrapper, args[argI]);
+  }
+
+  return unwrapper([]);
 }
 
 function lift(fn) {
-  return _lift(map, fn);
+  return function() {
+    return _baseInnerLift(false, fn, arguments);
+  };
 }
 
 function liftM(fn) {
-  return _lift(flatMap, fn);
+  return function() {
+    return _baseInnerLift(true, fn, arguments)
+  };
 }
+
 
 // :: a -> Boolean
 function isArguments(a) {
@@ -109,6 +113,7 @@ function compose() {
 }
 
 // Returns a wrapped function called with new
+// :: (-> a) -> (-> a)
 function construct(fn) {
   return function() {
     return new (fn.bind.apply(fn, [null].concat(Array.prototype.slice.call(arguments))));
@@ -162,10 +167,14 @@ function fold(fn, init, xs) {
   else if (isArray(xs)) {
     return foldArray(fn, init, xs);
   }
+  // TODO: Foldable for objects
+  // TODO: Foldable for dom
+  // TODO: Foldable for jQuery
 }
 
 // :: Functor f => (a -> b) -> f a -> f b
 function map(fn, xs) {
+  // TODO: Detect for null/undefined
   if (hasMethod('fmap', xs)) {
     return xs.fmap(fn);
   }
@@ -174,13 +183,15 @@ function map(fn, xs) {
   }
   // TODO: Detect for strings
   // TODO: Detect for functions
-  // TODO: Detect for objects
+  // TODO: Detect for A+ promises
   // TODO: Detect for arguments
   // TODO: Detect jquery objects
   // .. fallback
   else if (hasMethod('map', xs)) {
     return xs.map(function(x) { return fn(x); });
   }
+  // TODO: Detect for plain objects
+  // TODO: Detect for primatives
 }
 
 // Data types
@@ -352,178 +363,33 @@ _Future.prototype.fmap = _Future.prototype.map = function(fn) {
 
 _Future.of = resolved;
 
+_Future._innerLift = function(inner, fn, args) {
+  var argx = args.length;
 
-/////////////////////////////////
-// Exhibit A - Functors
+  return future(function(done) {
+    var argc  = 0,
+        argxs = [],
+        i;
 
-// :: String -> Number
-function length(str) {
-  return str.length;
-}
+    for (i = 0; i < argx; i++) {
+      args[i].fork(function(i, a) {
+        var result;
 
-length('Hello World');
+        argxs[i] = a;
+        argc    += 1;
 
-// Lifted to work on arrays
-// [String] -> [String]
-lift(length)(['Hello', 'World']);
+        if (argc === argx) {
+          result = fn.apply(this, argxs);
 
-
-/////////////////////////////////
-// Exhibit B - Applicatives
-
-// :: Number -> Number -> Number
-function add(a, b) {
-  return a + b;
-}
-
-add(5, 7);
-
-// [Number] -> [Number] -> [Number]
-lift(add)([1, 2], [3, 4]);
-
-
-/////////////////////////////////
-// Exhibit C - Monads
-
-function split(str) {
-  return str.split('');
-};
-
-split('Hello');
-
-liftM(split)(['Hello', 'World']);
-
-
-/////////////////////////////////
-// Exhibit D - Composition
-
-function toUpperCase(str) {
-  return str.toUpperCase();
-}
-
-compose(lift(toUpperCase), liftM(split))(['Hello', 'World']);
-
-
-/////////////////////////////////
-// Exhibit E - Maybe
-lift(toUpperCase)(just('Hello'));
-lift(toUpperCase)(nothing());
-
-function halveEven(a) {
-  if (a % 2 === 0) {
-    return just(a / 2);
-  }
-  else {
-    return nothing();
-  }
-};
-
-var halveEvenM = liftM(halveEven);
-
-compose(halveEvenM, halveEvenM, halveEven)(120);
-
-
-/////////////////////////////////
-// Exhibit F - Either
-
-function findRecord(id) {
-  var record = ({
-    1: 'Remy',
-    2: 'Billy',
-    5: 'Samson'
-  })[id];
-
-  if (record) {
-    return right(record);
-  }
-  else {
-    return left('Record "' + id + '" could not be found');
-  }
-}
-
-compose(lift(toUpperCase), findRecord)(5);
-
-
-/////////////////////////////////
-// Exhibit G - Validation
-
-function hasLength(name, len, str) {
-  if (str.length > len) {
-    return success(str);
-  }
-  else {
-    return failure(['"' + name + '" must have length > ' + len]);
-  }
-}
-
-function Person(first, last) {
-  this.first = first;
-  this.last  = last;
-}
-
-// :: this -> Validation [String] Person
-Person.prototype.validate = function() {
-  return lift(construct(Person))(
-    hasLength('First', 5, this.first),
-    hasLength('Last', 2, this.last)
-  );
-};
-
-// Proof that the thing preserves the constructor
-Person.prototype.sayHello = function() {
-  return 'Hello: ' + this.first;
-};
-
-(new Person('Remigio', 'Daggy')).validate().map(function(me) {
-  return me.sayHello();
-});
-
-
-/////////////////////////////////
-// Exhibit H - Futures
-
-function timedValue(x, time) {
-  return future(function(resolve) {
-    setTimeout(function() {
-      resolve(x);
-    }, time);
+          if (inner) {
+            result.fork(done);
+          }
+          else {
+            done(result);
+          }
+        }
+      }.bind(this, i));
+    }
   });
-}
-
-// Just like promises, only lazy
-lift(toUpperCase)(timedValue('hello', 500))
-.fork(function(result) {
-  console.log('future result', result);
-});
-
-
-// Handling failure requires a bit of lifting
-lift(findRecord)(timedValue(2, 200))
-.map(lift(toUpperCase))
-.fork(liftBi(
-  function(err) {
-    console.log('err', err);
-  },
-  function(result) {
-    console.log('success', result);
-  }
-));
-
-lift(halveEven)(timedValue(20, 200))
-.map(liftM(halveEven))
-.fork(liftBi(
-  function(err) {
-    console.log('err', err);
-  },
-  function(result) {
-    console.log('success', result);
-  }
-));
-
-
-
-/////////////////////////////////
-// Exhibit H - Lenses
-
-
+};
 
