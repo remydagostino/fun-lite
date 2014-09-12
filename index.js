@@ -1,1 +1,1 @@
-module.exports.fun = require('./src/fun-lite');
+module.exports = require('./src/fun-lite');

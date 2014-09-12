@@ -4,6 +4,8 @@
 
 A friendly drop-in functional programming library to work along side existing javascript.
 
+Read the getting started guide [here](https://github.com/remydagostino/fun-lite/blob/master/docs/guide.md).
+
 This library tries to be as practical and as small as possible. I want to provide the advantages of excellent abstractions that monads and functors provide while still embracing the way that javascript is usually written. This isn't a collection of utility belt functions; it is just a hand full of useful monads wrapped up in a convenient API. I would suggest using this library alongside Lodash, Underscore or Ramda (my personal favorite).
 
 - No modifying of native objects
@@ -25,11 +27,11 @@ Many of the existing options for functional programming in javascript are hard t
 I want to provide some quick and easy ways to get started.
 
 
-## The Ugly
+## Hardcore functional programming?
 
-Modularity is a good thing. This library isn't modular at all. The goal in this instance is convenience and practicality without breaking anything in the spirit of jQuery.
+This library won't help you if you want some real hardcore functional programming.
 
-Remember this is fun-lite. If you want to try some real fun then look at these:
+Remember this is fun-*lite*. If you want to try some real fun then look at these:
 
 - [Fantasy Land](https://github.com/fantasyland)
 - [Monet.js](http://cwmyers.github.io/monet.js/)
