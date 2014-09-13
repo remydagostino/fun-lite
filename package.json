@@ -23,5 +23,8 @@
   "dependencies": {
     "chai": "^1.9.1",
     "mocha": "^1.21.4"
+  },
+  "devDependencies": {
+    "when": "^3.4.5"
   }
 }

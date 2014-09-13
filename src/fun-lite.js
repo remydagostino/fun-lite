@@ -1,11 +1,20 @@
 (function(root, factory) {
+  function optionalRequire(moduleName) {
+    try {
+      return require(moduleName);
+    }
+    catch () {
+      return undefined;
+    }
+  }
+
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = factory();
+    module.exports = factory(optionalRequire('jquery'));
   }
   else {
-    root.fun = factory();
+    root.fun = factory(root.jQuery);
   }
-})(this, function() {
+})(this, function(jQuery) {
   function _baseInnerLift(inner, fn, args) {
     var argI, args, unwrapper;
 
@@ -63,11 +72,27 @@
     return Array.isArray(a);
   }
 
+  // :: a -> Boolean
+  function isNullOrUndefined(a) {
+    return typeof a === 'undefined' || a === null;
+  }
+
+  // :: a -> Boolean
+  function isJquery(a) {
+    if (isNullOrUndefined(jQuery)) {
+      return false;
+    }
+    else {
+      return (a instanceof jQuery);
+    }
+  }
+
   // :: a -> String -> Boolean
   function has(key, obj) {
     return obj != null && typeof obj[key] !== 'undefined';
   }
 
+  // :: String -> Object -> Boolean
   function hasMethod(key, obj) {
     return has(key, obj) && typeof obj[key] === 'function';
   }
@@ -100,12 +125,90 @@
     return result;
   }
 
+  // :: Arguments a => (a ->)
+  function mapArguments(fn, args) {
+    return foldArguments(function(m, x) {
+      return concat(m, fn(x))
+    }, [], args);
+  }
 
   // :: (b -> a -> b) -> b -> [a] -> c
   function foldArray(fn, init, xs) {
     return xs.reduce(function(m, x) {
       return fn(m, x);
     }, init);
+  }
+
+  // :: Boolean -> a -> Promise a
+  function makePromise(isRejected, value) {
+    var promise1;
+
+    promise1 = {
+      then: function(onFulfilled, onRejected) {
+        var callback, promise2;
+
+        promise2 = promise1;
+
+        callback = isRejected ? onRejected : onFulfilled;
+
+        if (typeof callback === 'function') {
+          try {
+            promise2 = callback(value);
+          }
+          catch (ex) {
+            promise2 = makePromise(true, ex);
+          }
+        }
+
+        if (promise2 == null || typeof promise2.then !== 'function') {
+          promise2 = makePromise(false, promise2);
+        }
+
+        return promise2;
+      }
+    }
+
+    return promise1;
+  }
+
+  // :: Promise p => (a -> p b) -> p a -> p b
+  function flatMapPromise(fn, p) {
+    return p.then(function(a) {
+      return fn(a);
+    });
+  }
+
+  // :: Promise p => (a -> b) -> p a -> p b
+  function mapPromise(fn, p) {
+    return flatMapPromise(function(a) {
+      return makePromise(false, fn(a));
+    }, p);
+  }
+
+
+  // :: (String -> b) -> String -> [b]
+  function mapString(fn, str) {
+    return str.split('').map(function(a) {
+      return fn(a);
+    });
+  }
+
+  // :: (a -> b) -> jQuery a -> b
+  function mapJquery(fn, obj) {
+
+  }
+
+  function flatMapHash(fn, obj) {
+
+  }
+
+  function mapHash(fn, obj) {
+
+  }
+
+  // :: (String -> String) -> String -> String
+  function flatMapString(fn, str) {
+    return mapString(fn, string).join('');
   }
 
   // :: (b -> c) -> ... -> (a -> b) -> (a -> c)
@@ -129,6 +232,7 @@
     }
   }
 
+  // A convenience for lifting a constructor over monads
   function liftC(cf) {
     return lift(construct(cf));
   }
@@ -187,24 +291,50 @@
 
   // :: Functor f => (a -> b) -> f a -> f b
   function map(fn, xs) {
-    // TODO: Detect for null/undefined
+    // Null/undefined
+    if (isNullOrUndefined(xs)) {
+      return xs;
+    }
+    // Compatable functors
     if (hasMethod('fmap', xs)) {
       return xs.fmap(fn);
     }
+    // Arrays
     else if (Array.isArray(xs)) {
       return arrayMap(fn, xs);
     }
-    // TODO: Detect for strings
-    // TODO: Detect for functions
-    // TODO: Detect for A+ promises
-    // TODO: Detect for arguments
-    // TODO: Detect jquery objects
-    // .. fallback
+    // Strings
+    else if (typeof xs === 'string') {
+      return mapString(fn, xs);
+    }
+    // Functions
+    else if (typeof xs === 'function') {
+      return compose(fn, xs);
+    }
+    // Argument Objects
+    else if (isArguments(xs)) {
+      return mapArguments(fn, xs);
+    }
+    // Thenables / A+ Promises
+    else if (hasMethod('then', xs) {
+      return mapPromise(fn, xs);
+    }
+    // jQuery objects
+    else if (isJquery(xs)) {
+      return mapJquery(fn, xs);
+    }
+    // Fantasy Land Functors
     else if (hasMethod('map', xs)) {
       return xs.map(function(x) { return fn(x); });
     }
-    // TODO: Detect for plain objects
-    // TODO: Detect for primatives
+    // Other objects
+    else if (typeof xs == 'object') {
+      return mapObject(fn, xs);
+    }
+    // Primatives (is this the wrong behavior?)
+    else {
+      return fn(xs);
+    }
   }
 
   // Data types
