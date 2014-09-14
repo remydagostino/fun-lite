@@ -1,6 +1,8 @@
 var fun     = require('../src/fun-lite'),
     assert  = require('chai').assert;
 
+// Interoperability tests
+require('./interop');
 
 // :: String -> Number
 function length(str) {

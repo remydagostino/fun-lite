@@ -25,6 +25,7 @@
     "mocha": "^1.21.4"
   },
   "devDependencies": {
+    "jquery": "^2.1.1",
     "when": "^3.4.5"
   }
 }

@@ -3,7 +3,7 @@
     try {
       return require(moduleName);
     }
-    catch () {
+    catch (ex) {
       return undefined;
     }
   }
@@ -15,6 +15,16 @@
     root.fun = factory(root.jQuery);
   }
 })(this, function(jQuery) {
+
+  // This is the base lift function.
+  // It is called with:
+  //   Boolean   - Indicating whether to unwrap
+  //               the innermost call.
+  //   Function  - The function being lifted
+  //   Arguments - The args the function is called. If
+  //               there are multiple then the first
+  //               is used to pattern match a more specific
+  //               lift function for that ADT
   function _baseInnerLift(inner, fn, args) {
     var argI, args, unwrapper;
 
@@ -49,18 +59,21 @@
     return unwrapper([]);
   }
 
+  // Functor/Applicative Lift
+  // :: Functor f => (a -> .. -> b) -> (f a -> .. -> f b)
   function lift(fn) {
     return function() {
       return _baseInnerLift(false, fn, arguments);
     };
   }
 
+  // Monadic lift
+  // :: Monad m => (a -> .. -> b) -> (m a -> .. -> m b)
   function liftM(fn) {
     return function() {
       return _baseInnerLift(true, fn, arguments)
     };
   }
-
 
   // :: a -> Boolean
   function isArguments(a) {
@@ -97,6 +110,25 @@
     return has(key, obj) && typeof obj[key] === 'function';
   }
 
+  // Returns a wrapped function called with new
+  // :: (-> a) -> (-> a)
+  function construct(fn) {
+    return function() {
+      var args = Array.prototype.slice.call(arguments);
+      return new (fn.bind.apply(fn, [null].concat(args)));
+    }
+  }
+
+  // A convenience for lifting a constructor over monads
+  function liftC(cf) {
+    return lift(construct(cf));
+  }
+
+
+  //
+  //////    Arrays           ////////////////////////////////
+  //
+
 
   // :: (a -> b) -> [a] -> [b]
   function arrayMap(fn, xs) {
@@ -112,14 +144,19 @@
     }, []);
   }
 
+
+  //
+  //////    Arguments        ////////////////////////////////
+  //
+
   // :: Arguments a => (c -> b -> c) -> c -> a -> c
   function foldArguments(fn, init, args) {
-    var argI, arg, result;
+    var argI, result;
 
     result = init;
 
-    for(argI = 0; arg < args.length; ++argI) {
-      result = fn(result, arguments[argI]);
+    for(argI = 0; argI < args.length; ++argI) {
+      result = fn(result, args[argI]);
     }
 
     return result;
@@ -139,37 +176,10 @@
     }, init);
   }
 
-  // :: Boolean -> a -> Promise a
-  function makePromise(isRejected, value) {
-    var promise1;
 
-    promise1 = {
-      then: function(onFulfilled, onRejected) {
-        var callback, promise2;
-
-        promise2 = promise1;
-
-        callback = isRejected ? onRejected : onFulfilled;
-
-        if (typeof callback === 'function') {
-          try {
-            promise2 = callback(value);
-          }
-          catch (ex) {
-            promise2 = makePromise(true, ex);
-          }
-        }
-
-        if (promise2 == null || typeof promise2.then !== 'function') {
-          promise2 = makePromise(false, promise2);
-        }
-
-        return promise2;
-      }
-    }
-
-    return promise1;
-  }
+  //
+  //////    Promises         ////////////////////////////////
+  //
 
   // :: Promise p => (a -> p b) -> p a -> p b
   function flatMapPromise(fn, p) {
@@ -178,13 +188,132 @@
     });
   }
 
+  // Mapping and flatmap are identical for promises
   // :: Promise p => (a -> b) -> p a -> p b
   function mapPromise(fn, p) {
-    return flatMapPromise(function(a) {
-      return makePromise(false, fn(a));
-    }, p);
+    return flatMapPromise(fn, p);
   }
 
+
+  //
+  //////    jQuery           ////////////////////////////////
+  //
+
+  // :: (b -> a -> b) -> jQuery a -> b -> b
+  function foldJquery(fn, init, obj) {
+    var result;
+
+    result = init;
+
+    return obj.each(function(i, e) {
+      result = fn(result, e);
+    });
+
+    return result;
+  }
+
+  // :: (a -> b) -> jQuery a -> jQuery b
+  function mapJquery(fn, obj) {
+    return obj.map(function(i, e) {
+      return fn(e);
+    });
+  }
+
+
+  //
+  //////    Primatives       ////////////////////////////////
+  //
+
+  // :: String/Number a => [a] -> a
+  function concatPrimatives(xs) {
+    var memo;
+
+    if (typeof xs[0] === 'string') {
+      memo = '';
+    }
+    else if (typeof xs[0] === 'number') {
+      memo = 0;
+    }
+    else {
+      throw new TypeError('concatPrimatives only works on strings and numbers');
+    }
+
+    return fold(function(m, v) {
+      return m + v;
+    }, memo, xs);
+  }
+
+
+  //
+  //////    Objects/Hashes   ////////////////////////////////
+  //
+
+  // :: (b -> (String, a) -> b) -> Object a -> b -> b
+  function foldHash(fn, init, obj) {
+    var k, result;
+
+    result = init;
+
+    for (k in obj) {
+      if (obj.hasOwnProperty(k)) {
+        result = fn(result, obj[k]);
+      }
+    }
+
+    return result;
+  }
+
+  // :: [Object a] -> Object a
+  function concatHashes(xs) {
+    return fold(function(m, obj) {
+      var k;
+
+      for (k in obj) {
+        if (obj.hasOwnProperty(k)) {
+          m[k] = obj[k];
+        }
+      }
+
+      return m;
+    }, {}, xs);
+  }
+
+  // :: (a -> Object b) -> Object a -> Object b
+  function flatMapHash(fn, obj) {
+    return foldHash(function(m, v) {
+      var k, obj;
+
+      obj = fn(v);
+
+      for (k in obj) {
+        if (obj.hasOwnProperty(k)) {
+          m[k] = obj[k];
+        }
+      }
+
+      return m;
+    }, {}, obj);
+  }
+
+  // :: (a -> b) -> Object a -> Object b
+  function mapHash(fn, obj) {
+    var k, result;
+
+    result = {};
+
+    for (k in obj) {
+      if (obj.hasOwnProperty(k)) {
+        result[k] = fn(obj[k]);
+      }
+    }
+
+    return result;
+  }
+
+
+  //
+  //////    Strings          ////////////////////////////////
+  //
 
   // :: (String -> b) -> String -> [b]
   function mapString(fn, str) {
@@ -193,23 +322,15 @@
     });
   }
 
-  // :: (a -> b) -> jQuery a -> b
-  function mapJquery(fn, obj) {
-
-  }
-
-  function flatMapHash(fn, obj) {
-
-  }
-
-  function mapHash(fn, obj) {
-
-  }
-
   // :: (String -> String) -> String -> String
   function flatMapString(fn, str) {
     return mapString(fn, string).join('');
   }
+
+
+  //
+  //////    Functions        ////////////////////////////////
+  //
 
   // :: (b -> c) -> ... -> (a -> b) -> (a -> c)
   function compose() {
@@ -223,70 +344,96 @@
     };
   }
 
-  // Returns a wrapped function called with new
-  // :: (-> a) -> (-> a)
-  function construct(fn) {
-    return function() {
-      var args = Array.prototype.slice.call(arguments);
-      return new (fn.bind.apply(fn, [null].concat(args)));
-    }
-  }
-
-  // A convenience for lifting a constructor over monads
-  function liftC(cf) {
-    return lift(construct(cf));
-  }
-
-  // :: Semigroup s => s a -> s a -> s a
-  function concat(a, b) {
-    if (hasMethod('concat', a)) {
-      return a.concat(b);
-    }
-    else if (typeof a == 'string' && typeof b == 'string') {
-      return a + b;
-    }
-  }
-
-  // :: ((a -> c) -> (b -> c)) -> m a b -> c
-  function liftBi(err, success) {
-    return function bimapper(a) {
-      // Handle null or undefined
-      if (a == null) {
-        return err();
-      }
-      else if (hasMethod('bimap', a)) {
-        return a.bimap(err, success);
-      }
+  // :: (a -> b) -> (a -> b -> c) -> (a -> c)
+  function flatMapFunction(fn, fx) {
+    return function(a) {
+      return fx(a, fn(a));
     };
+  }
+
+  //
+  //////    Multi-methods    ////////////////////////////////
+  //
+
+  // :: Semigroup s => s a -> .. -> s a -> s a
+  function concat(a) {
+    var result, i;
+
+    // Arrays + conformant semigroups
+    if (hasMethod('concat', a)) {
+      result = arguments[0].concat(arguments[1]);
+
+      for (i = 2; i < arguments.length; i++) {
+        result = result.concat(arguments[i]);
+      }
+
+      return result;
+    }
+    // Functions
+    else if (typeof a === 'function') {
+      // ... just compose backwards?
+      return compose.apply(null, Array.prototype.slice.call(arguments).reverse());
+    }
+    // Plain Hashes
+    else if (typeof a === 'object') {
+      return concatHashes(arguments);
+    }
+    // Primitives
+    else {
+      return concatPrimatives(arguments);
+    }
+  }
+
+  // :: Semigroup s => [s a] -> s a
+  function mconcat(xs) {
+    return concat.apply(null, xs);
   }
 
   // :: Monad m => (a -> [b]) -> [a] -> [b]
   function flatMap(fn, xs) {
+    // Our own flatmappables
     if (hasMethod('flatMap', xs)) {
       return xs.flatMap(fn);
     }
+    // Arrays
     else if (Array.isArray(xs)) {
       return arrayFlatten(arrayMap(fn, xs));
     }
-    // TODO: Flatmap for functions (hint: ((* 10) >>= (+)) 3 == 33 )
-    // TODO: Flatmap for objects
-    // fantasy land
+    // Promises
+    else if (hasMethod('then', xs)) {
+      return flatMapPromise(fn, xs);
+    }
+    // Fantasy land
     else if (hasMethod('chain', xs)) {
       return xs.chain(fn);
+    }
+    // Functions
+    else if (typeof xs === 'function') {
+      return flatMapFunction(fn, xs);
+    }
+    // Plain objects
+    else if (typeof xs === 'object') {
+      return flatMapHash(fn, xs);
     }
   }
 
   // :: Foldable f => (b -> a -> b) -> b -> f a -> b
   function fold(fn, init, xs) {
+    // Arguments
     if (isArguments(xs)) {
       return foldArguments(fn, init, xs);
     }
+    // Arrays
     else if (isArray(xs)) {
       return foldArray(fn, init, xs);
     }
-    // TODO: Foldable for objects
-    // TODO: Foldable for dom
-    // TODO: Foldable for jQuery
+    else if (isJquery(xs)) {
+      return foldJquery(fn, init, xs);
+    }
+    // Objects
+    else if (typeof xs === 'object') {
+      return foldHash(fn, init, xs);
+    }
   }
 
   // :: Functor f => (a -> b) -> f a -> f b
@@ -316,7 +463,7 @@
       return mapArguments(fn, xs);
     }
     // Thenables / A+ Promises
-    else if (hasMethod('then', xs) {
+    else if (hasMethod('then', xs)) {
       return mapPromise(fn, xs);
     }
     // jQuery objects
@@ -337,7 +484,22 @@
     }
   }
 
-  // Data types
+  // :: ((a -> c) -> (b -> c)) -> m a b -> c
+  function liftBi(err, success) {
+    return function bimapper(a) {
+      // Handle null or undefined
+      if (a == null) {
+        return err();
+      }
+      else if (hasMethod('bimap', a)) {
+        return a.bimap(err, success);
+      }
+    };
+  }
+
+
+
+  //////    Data Types       ////////////////////////////////
 
   // 1. Maybe
   function _Maybe(isJust, value) {
@@ -543,6 +705,7 @@
     liftC    : liftC,
     liftBi   : liftBi,
     concat   : concat,
+    mconcat  : mconcat,
     flatMap  : flatMap,
     fold     : fold,
     map      : map,
