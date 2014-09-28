@@ -310,24 +310,6 @@
     return result;
   }
 
-
-  //
-  //////    Strings          ////////////////////////////////
-  //
-
-  // :: (String -> b) -> String -> [b]
-  function mapString(fn, str) {
-    return str.split('').map(function(a) {
-      return fn(a);
-    });
-  }
-
-  // :: (String -> String) -> String -> String
-  function flatMapString(fn, str) {
-    return mapString(fn, string).join('');
-  }
-
-
   //
   //////    Functions        ////////////////////////////////
   //
@@ -391,6 +373,10 @@
 
   // :: Monad m => (a -> [b]) -> [a] -> [b]
   function flatMap(fn, xs) {
+    // Null/undefined
+    if (isNullOrUndefined(xs)) {
+      return xs;
+    }
     // Our own flatmappables
     if (hasMethod('flatMap', xs)) {
       return xs.flatMap(fn);
@@ -414,6 +400,9 @@
     // Plain objects
     else if (typeof xs === 'object') {
       return flatMapHash(fn, xs);
+    }
+    else {
+      return fn(xs);
     }
   }
 
@@ -443,16 +432,12 @@
       return xs;
     }
     // Compatable functors
-    if (hasMethod('fmap', xs)) {
+    else if (hasMethod('fmap', xs)) {
       return xs.fmap(fn);
     }
     // Arrays
     else if (Array.isArray(xs)) {
       return arrayMap(fn, xs);
-    }
-    // Strings
-    else if (typeof xs === 'string') {
-      return mapString(fn, xs);
     }
     // Functions
     else if (typeof xs === 'function') {
@@ -475,7 +460,7 @@
       return xs.map(function(x) { return fn(x); });
     }
     // Other objects
-    else if (typeof xs == 'object') {
+    else if (typeof xs === 'object') {
       return mapObject(fn, xs);
     }
     // Primatives (is this the wrong behavior?)
